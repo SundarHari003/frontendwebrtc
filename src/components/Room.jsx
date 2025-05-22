@@ -146,7 +146,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('http://localhost:3001', {
+    const newSocket = io('http://192.168.1.118:3001', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
