@@ -480,7 +480,7 @@ const Room = ({ roomId, name, isCreating }) => {
           if (response.error) {
             reject(new Error(response.error));
             toast.error(`Error creating ${direction} transport: ${response.error}`);
-            console.log(`Create ${direction} transport error:`, response.error);
+            console.error(`Create ${direction} transport error:`, response.error);
             return;
           }
 
@@ -488,11 +488,11 @@ const Room = ({ roomId, name, isCreating }) => {
             direction === 'send'
               ? device.createSendTransport({
                 ...response.params,
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
               })
               : device.createRecvTransport({
                 ...response.params,
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
               });
 
           transport.on('connect', ({ dtlsParameters }, callback, errback) => {
@@ -500,11 +500,28 @@ const Room = ({ roomId, name, isCreating }) => {
               if (res.error) {
                 errback(new Error(res.error));
                 toast.error(`Error connecting ${direction} transport: ${res.error}`);
-                console.log(`Connect ${direction} transport error:`, res.error);
+                console.error(`Connect ${direction} transport error:`, res.error);
               } else {
+                console.log(`Connected ${direction} transport`);
                 callback();
               }
             });
+          });
+
+          transport.on('iceconnectionstatechange', () => {
+            console.log(`ICE connection state for ${direction} transport:`, transport.iceConnectionState);
+            if (transport.iceConnectionState === 'failed') {
+              setError(`ICE connection failed for ${direction} transport`);
+              toast.error(`ICE connection failed for ${direction} transport`);
+            }
+          });
+
+          transport.on('icegatheringstatechange', () => {
+            console.log(`ICE gathering state for ${direction} transport:`, transport.iceGatheringState);
+          });
+
+          transport.on('icecandidate', (candidate) => {
+            console.log(`Local ICE candidate for ${direction} transport:`, candidate);
           });
 
           if (direction === 'send') {
@@ -513,7 +530,7 @@ const Room = ({ roomId, name, isCreating }) => {
                 if (res.error) {
                   errback(new Error(res.error));
                   toast.error(`Error producing: ${res.error}`);
-                  console.log('Produce error:', res.error);
+                  console.error('Produce error:', res.error);
                 } else {
                   callback({ id: res.producerId });
                 }
@@ -522,10 +539,10 @@ const Room = ({ roomId, name, isCreating }) => {
           }
 
           transport.on('connectionstatechange', (state) => {
+            console.log(`Transport ${direction} connection state:`, state);
             if (state === 'failed' || state === 'disconnected') {
               setError(`Transport ${direction} connection failed`);
               toast.error(`Transport ${direction} connection failed`);
-              console.log(`Transport ${direction} connection state changed to:`, state);
             }
           });
 
@@ -623,7 +640,7 @@ const Room = ({ roomId, name, isCreating }) => {
             (response) => {
               if (response.error) {
                 reject(new Error(response.error));
-                console.log('Consume error:', response.error);
+                console.error('Consume error:', response.error);
               } else {
                 resolve(response);
               }
@@ -636,14 +653,26 @@ const Room = ({ roomId, name, isCreating }) => {
           producerId: params.producerId,
           kind: params.kind,
           rtpParameters: params.rtpParameters,
-          appData: producer.appData || { mediaType: params.kind }, // Use appData from producer or fallback to kind
+          appData: producer.appData || { mediaType: params.kind },
         });
 
         const stream = new MediaStream();
         stream.addTrack(consumer.track);
 
+        // Log consumer and stream details
+        console.log('Consumer created:', {
+          id: consumer.id,
+          kind: consumer.kind,
+          track: consumer.track,
+          trackEnabled: consumer.track.enabled,
+          trackReadyState: consumer.track.readyState,
+          streamTracks: stream.getTracks(),
+          streamActive: stream.active,
+        });
+
         await new Promise((resolve) => {
           socket.emit('resumeConsumer', { consumerId: consumer.id }, () => {
+            console.log('Consumer resumed:', consumer.id);
             resolve();
           });
         });
@@ -655,11 +684,11 @@ const Room = ({ roomId, name, isCreating }) => {
           peerName: producer.peerName,
           producerId: producer.producerId,
           kind: params.kind,
-          mediaType: consumer.appData.mediaType || params.kind, // Include mediaType for categorization
+          mediaType: consumer.appData.mediaType || params.kind,
         };
       } catch (err) {
         toast.error(`Error consuming producer: ${err.message}`);
-        console.log('Create consumer error:', err.message);
+        console.error('Create consumer error:', err.message);
         return null;
       }
     },
