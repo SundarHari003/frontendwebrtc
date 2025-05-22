@@ -7,4 +7,16 @@ export default defineConfig({
     tailwindcss()
   ],
   base: 'frontendwebrtc',
+  build: {
+    chunkSizeWarningLimit: 1000, // increase limit if you're okay with larger chunks
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            return 'vendor'; // creates a separate vendor chunk
+          }
+        }
+      }
+    }
+  }
 })
