@@ -333,7 +333,7 @@ const Room = ({ roomId, name, isCreating }) => {
             prev.map((p) => (p.id === peerId ? { ...p, handRaise: enabled } : p))
           );
           if (peerId != socket.id && peerName && enabled) {
-            toast(`${peerName} was hand raised `, { icon: '✋'});
+            toast(`${peerName} was hand raised `, { icon: '✋' });
           }
         });
 
@@ -486,8 +486,14 @@ const Room = ({ roomId, name, isCreating }) => {
 
           const transport =
             direction === 'send'
-              ? device.createSendTransport(response.params)
-              : device.createRecvTransport(response.params);
+              ? device.createSendTransport({
+                ...response.params,
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+              })
+              : device.createRecvTransport({
+                ...response.params,
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+              });
 
           transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             socket.emit('connectTransport', { transportId: transport.id, dtlsParameters }, (res) => {
@@ -1344,7 +1350,7 @@ const Room = ({ roomId, name, isCreating }) => {
             className={`absolute z-10 right-6 ${chatOpen ? 'bottom-6' : '-bottom-4'} w-96 bg-white/50 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-2xl transition-all duration-500 ease-in-out ${chatOpen ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
           >
             <div className="p-4 border-b border-gray-200/50 bg-gray-100/50 rounded-t-2xl backdrop-blur-2xl flex justify-between items-center">
-              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <MdOutlineChat className=" size-5"/><span className="mb-1">Chat</span></h3>
+              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <MdOutlineChat className=" size-5" /><span className="mb-1">Chat</span></h3>
               <button onClick={() => setChatOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
                   <path
@@ -1399,7 +1405,7 @@ const Room = ({ roomId, name, isCreating }) => {
             className={`absolute z-10 left-6 ${showparticipants ? 'bottom-6' : '-bottom-4'} w-96 bg-gray-200 rounded-2xl border border-gray-200/50 shadow-2xl transition-all duration-500 ease-in-out ${showparticipants ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
           >
             <div className="p-4 border-b border-gray-200/50 bg-gray-100/50 rounded-t-2xl backdrop-blur-2xl flex justify-between items-center">
-            <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <HiOutlineUserGroup className=" size-5"/><span className="">Participiants {`(${participants?.length})`}</span></h3>
+              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <HiOutlineUserGroup className=" size-5" /><span className="">Participiants {`(${participants?.length})`}</span></h3>
               <button onClick={() => setshowparticipants(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
                   <path
