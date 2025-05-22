@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react(),
     tailwindcss()
   ],
-  base: 'frontendwebrtc',
+  base: '/frontendwebrtc/',
   build: {
     chunkSizeWarningLimit: 1000, // increase limit if you're okay with larger chunks
     rollupOptions: {
