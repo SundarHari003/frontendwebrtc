@@ -12,6 +12,7 @@ import { FaStopCircle } from "react-icons/fa";
 import { FiCamera, FiCameraOff } from 'react-icons/fi';
 import { HiOutlineUserGroup } from "react-icons/hi";
 import { MdOutlineChat, MdScreenShare } from 'react-icons/md';
+
 const Room = ({ roomId, name, isCreating }) => {
   // State management
   const [socket, setSocket] = useState(null);
@@ -40,6 +41,7 @@ const Room = ({ roomId, name, isCreating }) => {
   const [messages, setMessages] = useState([]);
   const [chatMessage, setChatMessage] = useState('');
   const [connectionStats, setConnectionStats] = useState(null);
+  const [pendingConsumes, setPendingConsumes] = useState(new Set());
   const [debugState, setDebugState] = useState('initializing');
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -54,7 +56,16 @@ const Room = ({ roomId, name, isCreating }) => {
   const mediaRecorderRef = useRef(null);
   const chunks = useRef([]);
 
+  // Debounce utility
+  function debounce(func, wait) {
+    let timeout;
+    return (...args) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  }
 
+  // Recording timer functions
   const formatRecordingTime = (seconds) => {
     const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
     const mins = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
@@ -62,7 +73,6 @@ const Room = ({ roomId, name, isCreating }) => {
     return `${hrs} : ${mins} : ${secs}`;
   };
 
-  // Start recording timer
   const startRecordingTimer = () => {
     setRecordingTime(0);
     recordingTimerRef.current = setInterval(() => {
@@ -70,7 +80,6 @@ const Room = ({ roomId, name, isCreating }) => {
     }, 1000);
   };
 
-  // Stop recording timer
   const stopRecordingTimer = () => {
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
@@ -78,30 +87,29 @@ const Room = ({ roomId, name, isCreating }) => {
     }
   };
 
+  // Recording functions
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          displaySurface: 'tab', // Suggests the current tab in the prompt
+          displaySurface: 'tab',
         },
-        audio: true, // Include audio if needed
-        preferCurrentTab: true, // Chrome-specific hint to prioritize the current tab
+        audio: true,
+        preferCurrentTab: true,
       });
 
-      // Stop any existing stream tracks to prevent multiple recordings
       if (mediaRecorderRef.current?.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       }
 
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'video/webm' });
 
-      // Handle stream end (e.g., when user clicks "Stop Sharing" in Chrome)
       stream.getVideoTracks()[0].onended = () => {
         if (mediaRecorderRef.current?.state !== 'inactive') {
           mediaRecorderRef.current.stop();
         }
-        setRecordingTime(0); // Reset timer
-        setRecording(false); // Reset recording state
+        setRecordingTime(0);
+        setRecording(false);
       };
 
       mediaRecorderRef.current.ondataavailable = (event) => {
@@ -113,12 +121,12 @@ const Room = ({ roomId, name, isCreating }) => {
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(chunks.current, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
-        setVideoUrl(url); // Set URL for download button
+        setVideoUrl(url);
         stopRecordingTimer();
         chunks.current = [];
         stream.getTracks().forEach(track => track.stop());
-        setRecordingTime(0); // Ensure timer is reset
-        setRecording(false); // Ensure recording state is reset
+        setRecordingTime(0);
+        setRecording(false);
       };
 
       mediaRecorderRef.current.start();
@@ -126,15 +134,14 @@ const Room = ({ roomId, name, isCreating }) => {
       setRecording(true);
     } catch (error) {
       console.error('Error starting recording:', error);
-      setRecording(false); // Reset recording state on error
-      setRecordingTime(0); // Reset timer on error
+      setRecording(false);
+      setRecordingTime(0);
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
-      // No need to set recordingTime or recording here, as onstop handles it
     }
   };
 
@@ -143,6 +150,19 @@ const Room = ({ roomId, name, isCreating }) => {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Fetch TURN credentials
+  const getTurnCredentials = useCallback(async () => {
+    try {
+      const response = await fetch('https://api.metered.ca/turn/credentials?apiKey=your-metered-api-key');
+      const credentials = await response.json();
+      return credentials;
+    } catch (err) {
+      console.error('Error fetching TURN credentials:', err);
+      return [{ urls: 'stun:stun.l.google.com:19302' }];
+    }
+  }, []);
+
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
@@ -209,14 +229,11 @@ const Room = ({ roomId, name, isCreating }) => {
             }
           });
         } else {
-          socket.emit('joinRoom', { roomId, name }, (response) => {
+          socket.emit('request-to-join', { roomId, name }, (response) => {
             if (response.success) {
-              setParticipants(response.users || []);
-              setPeerId(socket.id);
-              setIsAdmitted(true);
               setIsLoading(false);
-              setDebugState('joined-room');
-              toast.success('Joined room successfully');
+              setDebugState('requested-to-join');
+              toast.success('Join request sent to admin');
             } else {
               setError(response.error);
               setIsLoading(false);
@@ -248,18 +265,21 @@ const Room = ({ roomId, name, isCreating }) => {
           }
         });
 
-        socket.on('admitted', () => {
+        socket.on('admitted', ({ roomId, rtpCapabilities }) => {
           setIsAdmitted(true);
           setIsLoading(false);
           setDebugState('admitted');
           toast.success('You have been admitted to the room');
           console.log('Participant admitted to room:', roomId);
-          socket.emit('getRouterRtpCapabilities', (response) => {
-            if (response.error) {
+          socket.emit('joinRoom', { roomId, name }, (response) => {
+            if (response.success) {
+              setParticipants(response.users || []);
+              setPeerId(socket.id);
+              setDebugState('joined-room');
+              toast.success('Joined room successfully');
+            } else {
               setError(response.error);
-              setIsMediaLoading(false);
               toast.error(response.error);
-              console.log('Get router capabilities error after admission:', response.error);
             }
           });
         });
@@ -298,13 +318,13 @@ const Room = ({ roomId, name, isCreating }) => {
           console.log('Received producer list:', producerList);
         });
 
-        socket.on('newProducer', (producerData) => {
+        socket.on('newProducer', debounce((producerData) => {
           setProducers((prev) => {
             if (prev.some((p) => p.producerId === producerData.producerId)) return prev;
             return [...prev, producerData];
           });
           console.log('New producer added:', producerData);
-        });
+        }, 100));
 
         socket.on('peer-media-toggle', ({ peerId, type, enabled, peerName }) => {
           setParticipants((prev) =>
@@ -312,7 +332,7 @@ const Room = ({ roomId, name, isCreating }) => {
               p.id === peerId ? { ...p, [`is${type.charAt(0).toUpperCase() + type.slice(1)}On`]: enabled } : p
             )
           );
-          if (peerId != socket.id) {
+          if (peerId !== socket.id) {
             toast(`${peerName} ${enabled ? 'enabled' : 'disabled'} ${type}`, { icon: enabled ? '✅' : '❌' });
           }
           console.log(`Peer ${peerId} toggled ${type} to ${enabled}`);
@@ -322,7 +342,7 @@ const Room = ({ roomId, name, isCreating }) => {
           setParticipants((prev) =>
             prev.map((p) => (p.id === peerId ? { ...p, sharingScreen: enabled } : p))
           );
-          if (peerId != socket.id && peerName) {
+          if (peerId !== socket.id && peerName) {
             toast(`${peerName} ${enabled ? 'started' : 'stopped'} screen sharing`, { icon: enabled ? '🖥️' : '🛑' });
           }
           console.log(`Peer ${peerId} toggled screen sharing to ${enabled}`);
@@ -332,8 +352,8 @@ const Room = ({ roomId, name, isCreating }) => {
           setParticipants((prev) =>
             prev.map((p) => (p.id === peerId ? { ...p, handRaise: enabled } : p))
           );
-          if (peerId != socket.id && peerName && enabled) {
-            toast(`${peerName} was hand raised `, { icon: '✋' });
+          if (peerId !== socket.id && peerName && enabled) {
+            toast(`${peerName} was hand raised`, { icon: '✋' });
           }
         });
 
@@ -348,11 +368,8 @@ const Room = ({ roomId, name, isCreating }) => {
         socket.on('participants-updated', ({ users, joiningPeer }) => {
           console.log('Participants updated:', users);
           setParticipants(users);
-
           if (joiningPeer && joiningPeer.peerId !== socket.id) {
-            toast.success(`${joiningPeer.name} joined the room`, {
-              icon: '👤'
-            });
+            toast.success(`${joiningPeer.name} joined the room`, { icon: '👤' });
           }
         });
 
@@ -397,6 +414,7 @@ const Room = ({ roomId, name, isCreating }) => {
       socket.off('newProducer');
       socket.off('peer-media-toggle');
       socket.off('screenshare-toggle');
+      socket.off('handraise-toggle');
       socket.off('new-message');
       socket.off('participants-updated');
       socket.off('peerPropertiesUpdated');
@@ -445,13 +463,14 @@ const Room = ({ roomId, name, isCreating }) => {
   useEffect(() => {
     if (!device || !socket || !localStream || !isAdmitted) return;
 
-    const createTransports = async () => {
+    const initializeTransports = async () => {
       try {
         setDebugState('creating-transports');
-        const sendTransport = await createTransport('send');
+        const iceServers = await getTurnCredentials();
+        const sendTransport = await createTransport('send', iceServers);
         setSendTransport(sendTransport);
         setDebugState('send-transport-created');
-        const recvTransport = await createTransport('recv');
+        const recvTransport = await createTransport('recv', iceServers);
         setRecvTransport(recvTransport);
         setDebugState('recv-transport-created');
         setDebugState('initialization-complete');
@@ -464,17 +483,17 @@ const Room = ({ roomId, name, isCreating }) => {
       }
     };
 
-    createTransports();
+    initializeTransports();
 
     return () => {
       if (sendTransport) sendTransport.close();
       if (recvTransport) recvTransport.close();
     };
-  }, [device, socket, localStream, isAdmitted]);
+  }, [device, socket, localStream, isAdmitted, getTurnCredentials]);
 
   // Transport creation helper
   const createTransport = useCallback(
-    async (direction) => {
+    async (direction, iceServers) => {
       return new Promise((resolve, reject) => {
         socket.emit('createWebRtcTransport', { direction }, (response) => {
           if (response.error) {
@@ -486,14 +505,8 @@ const Room = ({ roomId, name, isCreating }) => {
 
           const transport =
             direction === 'send'
-              ? device.createSendTransport({
-                ...response.params,
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-              })
-              : device.createRecvTransport({
-                ...response.params,
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-              });
+              ? device.createSendTransport({ ...response.params, iceServers })
+              : device.createRecvTransport({ ...response.params, iceServers });
 
           transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             socket.emit('connectTransport', { transportId: transport.id, dtlsParameters }, (res) => {
@@ -516,14 +529,6 @@ const Room = ({ roomId, name, isCreating }) => {
             }
           });
 
-          transport.on('icegatheringstatechange', () => {
-            console.log(`ICE gathering state for ${direction} transport:`, transport.iceGatheringState);
-          });
-
-          transport.on('icecandidate', (candidate) => {
-            console.log(`Local ICE candidate for ${direction} transport:`, candidate);
-          });
-
           if (direction === 'send') {
             transport.on('produce', ({ kind, rtpParameters, appData }, callback, errback) => {
               socket.emit('produce', { transportId: transport.id, kind, rtpParameters, appData }, (res) => {
@@ -537,14 +542,6 @@ const Room = ({ roomId, name, isCreating }) => {
               });
             });
           }
-
-          transport.on('connectionstatechange', (state) => {
-            console.log(`Transport ${direction} connection state:`, state);
-            if (state === 'failed' || state === 'disconnected') {
-              setError(`Transport ${direction} connection failed`);
-              toast.error(`Transport ${direction} connection failed`);
-            }
-          });
 
           resolve(transport);
         });
@@ -595,6 +592,90 @@ const Room = ({ roomId, name, isCreating }) => {
     produceMedia();
   }, [sendTransport, localStream]);
 
+  // Consumer creation helper
+  const createConsumer = useCallback(
+    async (producer, retryCount = 3, retryDelay = 1000) => {
+      for (let attempt = 1; attempt <= retryCount; attempt++) {
+        try {
+          const { params } = await new Promise((resolve, reject) => {
+            socket.emit(
+              'consume',
+              {
+                transportId: recvTransport.id,
+                producerId: producer.producerId,
+                rtpCapabilities: device.rtpCapabilities,
+              },
+              (response) => {
+                if (response.error) {
+                  reject(new Error(response.error));
+                  console.log('Consume error:', response.error);
+                } else {
+                  resolve(response);
+                }
+              }
+            );
+          });
+
+          const consumer = await recvTransport.consume({
+            id: params.id,
+            producerId: params.producerId,
+            kind: params.kind,
+            rtpParameters: params.rtpParameters,
+            appData: producer.appData || { mediaType: params.kind },
+          });
+
+          const stream = new MediaStream();
+          stream.addTrack(consumer.track);
+
+          console.log('Consumer created:', {
+            id: consumer.id,
+            kind: consumer.kind,
+            track: consumer.track,
+            trackEnabled: consumer.track.enabled,
+            trackReadyState: consumer.track.readyState,
+            streamTracks: stream.getTracks(),
+            streamActive: stream.active,
+            peerId: producer.peerId,
+            producerId: producer.producerId,
+          });
+
+          await new Promise((resolve, reject) => {
+            socket.emit('resumeConsumer', { consumerId: consumer.id }, (response) => {
+              if (response.error) {
+                reject(new Error(response.error));
+                console.log('Resume consumer error:', response.error);
+              } else {
+                console.log('Consumer resumed:', consumer.id);
+                resolve();
+              }
+            });
+          });
+
+          return {
+            consumer,
+            stream,
+            peerId: producer.peerId,
+            peerName: producer.peerName,
+            producerId: producer.producerId,
+            kind: params.kind,
+            mediaType: consumer.appData.mediaType || params.kind,
+          };
+        } catch (err) {
+          if (err.message.includes('Consumer already exists') && attempt < retryCount) {
+            console.log(`Retrying consumer creation for producer ${producer.producerId} (attempt ${attempt + 1})`);
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          toast.error(`Error consuming producer: ${err.message}`);
+          console.error('Create consumer error:', err.message);
+          return null;
+        }
+      }
+      return null;
+    },
+    [recvTransport, device, socket]
+  );
+
   // Consume producers
   useEffect(() => {
     if (!recvTransport || !device || !socket || producers.length === 0 || !peerId) return;
@@ -603,97 +684,43 @@ const Room = ({ roomId, name, isCreating }) => {
       const producersToConsume = producers.filter(
         (producer) =>
           producer.peerId !== peerId &&
-          !consumers.some((c) => c.producerId === producer.producerId)
+          !consumers.some((c) => c.producerId === producer.producerId) &&
+          !pendingConsumes.has(producer.producerId)
       );
 
       if (producersToConsume.length === 0) return;
 
       try {
+        setPendingConsumes((prev) => {
+          const newSet = new Set(prev);
+          producersToConsume.forEach((p) => newSet.add(p.producerId));
+          return newSet;
+        });
+
         const newConsumers = await Promise.all(producersToConsume.map(createConsumer));
         const successfulConsumers = newConsumers.filter(Boolean);
         if (successfulConsumers.length > 0) {
-          setConsumers((prev) => [...prev, ...successfulConsumers]);
-          console.log('New consumers added:', successfulConsumers);
+          setConsumers((prev) => {
+            const updatedConsumers = [...prev, ...successfulConsumers];
+            console.log('New consumers added:', successfulConsumers);
+            return updatedConsumers;
+          });
         }
       } catch (err) {
         setError(`Error consuming media: ${err.message}`);
         toast.error(`Error consuming media: ${err.message}`);
-        console.log('Consume producers error:', err.message);
+        console.error('Consume producers error:', err.message);
+      } finally {
+        setPendingConsumes((prev) => {
+          const newSet = new Set(prev);
+          producersToConsume.forEach((p) => newSet.delete(p.producerId));
+          return newSet;
+        });
       }
     };
 
     consumeProducers();
-  }, [producers, recvTransport, device, socket, consumers, peerId]);
-
-  // Consumer creation helper
-  const createConsumer = useCallback(
-    async (producer) => {
-      try {
-        const { params } = await new Promise((resolve, reject) => {
-          socket.emit(
-            'consume',
-            {
-              transportId: recvTransport.id,
-              producerId: producer.producerId,
-              rtpCapabilities: device.rtpCapabilities,
-            },
-            (response) => {
-              if (response.error) {
-                reject(new Error(response.error));
-                console.error('Consume error:', response.error);
-              } else {
-                resolve(response);
-              }
-            }
-          );
-        });
-
-        const consumer = await recvTransport.consume({
-          id: params.id,
-          producerId: params.producerId,
-          kind: params.kind,
-          rtpParameters: params.rtpParameters,
-          appData: producer.appData || { mediaType: params.kind },
-        });
-
-        const stream = new MediaStream();
-        stream.addTrack(consumer.track);
-
-        // Log consumer and stream details
-        console.log('Consumer created:', {
-          id: consumer.id,
-          kind: consumer.kind,
-          track: consumer.track,
-          trackEnabled: consumer.track.enabled,
-          trackReadyState: consumer.track.readyState,
-          streamTracks: stream.getTracks(),
-          streamActive: stream.active,
-        });
-
-        await new Promise((resolve) => {
-          socket.emit('resumeConsumer', { consumerId: consumer.id }, () => {
-            console.log('Consumer resumed:', consumer.id);
-            resolve();
-          });
-        });
-
-        return {
-          consumer,
-          stream,
-          peerId: producer.peerId,
-          peerName: producer.peerName,
-          producerId: producer.producerId,
-          kind: params.kind,
-          mediaType: consumer.appData.mediaType || params.kind,
-        };
-      } catch (err) {
-        toast.error(`Error consuming producer: ${err.message}`);
-        console.error('Create consumer error:', err.message);
-        return null;
-      }
-    },
-    [recvTransport, device, socket]
-  );
+  }, [producers, recvTransport, device, socket, consumers, peerId, pendingConsumes, createConsumer]);
 
   // Stats monitoring
   useEffect(() => {
@@ -701,7 +728,7 @@ const Room = ({ roomId, name, isCreating }) => {
 
     statsIntervalRef.current = setInterval(async () => {
       try {
-        const stats = await sendTransport;
+        const stats = await sendTransport.getStats();
         setConnectionStats(stats || {});
       } catch (err) {
         toast.error('Error getting connection stats');
@@ -717,7 +744,6 @@ const Room = ({ roomId, name, isCreating }) => {
   // Control functions
   const toggleAudio = useCallback(() => {
     if (localStream) {
-
       const newState = !trackStates.audio;
       localStream.getAudioTracks().forEach((track) => (track.enabled = newState));
       setTrackStates((prev) => ({ ...prev, audio: newState }));
@@ -735,7 +761,7 @@ const Room = ({ roomId, name, isCreating }) => {
         }
       });
     }
-  }, [localStream, trackStates.audio, socket, roomId, producerObjects]);
+  }, [localStream, trackStates.audio, socket, roomId, name, producerObjects]);
 
   const toggleVideo = useCallback(() => {
     if (localStream) {
@@ -756,7 +782,7 @@ const Room = ({ roomId, name, isCreating }) => {
         }
       });
     }
-  }, [localStream, trackStates.video, socket, roomId, producerObjects]);
+  }, [localStream, trackStates.video, socket, roomId, name, producerObjects]);
 
   const toggleScreenShare = useCallback(async () => {
     try {
@@ -799,7 +825,7 @@ const Room = ({ roomId, name, isCreating }) => {
 
       setProducerObjects((prev) => ({ ...prev, [screenProducer.id]: screenProducer }));
 
-      socket.emit('toggle-screenshare', { roomId, enabled: true }, (response) => {
+      socket.emit('toggle-screenshare', { roomId, enabled: true, name }, (response) => {
         if (response.success) {
           toast.success('Started screen sharing');
         } else {
@@ -821,7 +847,7 @@ const Room = ({ roomId, name, isCreating }) => {
         screenProducer.close();
         setTrackStates((prev) => ({ ...prev, screen: false }));
         setScreenShareStream(null);
-        socket.emit('toggle-screenshare', { roomId, enabled: false }, (response) => {
+        socket.emit('toggle-screenshare', { roomId, enabled: false, name }, (response) => {
           if (response.success) {
             toast.success('Screen sharing stopped');
           } else {
@@ -838,7 +864,7 @@ const Room = ({ roomId, name, isCreating }) => {
         console.log('Toggle screen share error:', err.message);
       }
     }
-  }, [trackStates.screen, screenShareStream, sendTransport, socket, roomId]);
+  }, [trackStates.screen, screenShareStream, sendTransport, socket, roomId, name]);
 
   const handleAdmitParticipant = (peerId) => {
     socket.emit('admit-participant', { roomId, peerId }, (response) => {
@@ -852,6 +878,7 @@ const Room = ({ roomId, name, isCreating }) => {
       }
     });
   };
+
   const togglehandraise = async () => {
     try {
       socket.emit('toggle-handraise', { roomId, enabled: !isuserhandraised, name }, (response) => {
@@ -859,14 +886,15 @@ const Room = ({ roomId, name, isCreating }) => {
           toast.success(!isuserhandraised ? 'Hand Raised' : 'Hand Downed');
         } else {
           toast.error(response.error);
-          console.log('Handle raise error:', response.error);
+          console.log('Hand raise error:', response.error);
         }
       });
       setisuserhandraised(!isuserhandraised);
     } catch (error) {
-      toast.error(`Error handleraise: ${error.message}`);
+      toast.error(`Error hand raise: ${error.message}`);
     }
-  }
+  };
+
   const sendMessage = (e) => {
     e.preventDefault();
     if (chatMessage.trim()) {
@@ -910,7 +938,6 @@ const Room = ({ roomId, name, isCreating }) => {
     if (!peerConsumers[consumer.peerId]) {
       peerConsumers[consumer.peerId] = { name: consumer.peerName, media: {} };
     }
-    // Use mediaType instead of kind to categorize screen sharing
     peerConsumers[consumer.peerId].media[consumer.mediaType] = consumer;
   });
 
@@ -1003,10 +1030,8 @@ const Room = ({ roomId, name, isCreating }) => {
       <div className="relative h-full w-full flex flex-col font-sans">
         <header className="px-6 py-4 z-10 bg-white/50 backdrop-blur-md border-b border-gray-200/50">
           <div className="flex justify-between items-center">
-            {/* Room Info and Admin Badge */}
             <div className="flex items-center space-x-4">
               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight flex items-center space-x-2">
-                {/* <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-teal-500">Room:</span> */}
                 <span className="text-gray-800">{roomId}</span>
                 <button
                   onClick={handleCopy}
@@ -1023,37 +1048,25 @@ const Room = ({ roomId, name, isCreating }) => {
                 </span>
               )}
             </div>
-
-            {/* Participant Count & Connection Status */}
             <div className="flex items-center space-x-6">
               <div className=' flex items-center space-x-2'>
                 <div className="flex relative items-center cursor-pointer space-x-2 bg-gray-200 text-gray-800 font-medium backdrop-blur-md rounded-full px-4 py-2 shadow-md">
                   {recording && <span className=' bg-red-500 left-3.5 absolute animate-ping size-3 rounded-full me-2'></span>}
-                  <span className=' bg-red-500  size-2 rounded-full me-3'></span>
+                  <span className=' bg-red-500 size-2 rounded-full me-3'></span>
                   {formatRecordingTime(recordingTime)}
                 </div>
                 <div>
-                  {
-                    recording ? (
-                      <div onClick={stopRecording}><FaStopCircle className=' size-9 text-red-500 cursor-pointer backdrop-blur-md rounded-full shadow-md' title='stop record' /></div>
-                    ) : (
-                      <div onClick={startRecording}><FaCirclePlay className=' size-9 text-blue-500 cursor-pointer backdrop-blur-md rounded-full shadow-md' title='start record' /></div>
-                    )
-                  }
+                  {recording ? (
+                    <div onClick={stopRecording}>
+                      <FaStopCircle className=' size-9 text-red-500 cursor-pointer backdrop-blur-md rounded-full shadow-md' title='stop record' />
+                    </div>
+                  ) : (
+                    <div onClick={startRecording}>
+                      <FaCirclePlay className=' size-9 text-blue-500 cursor-pointer backdrop-blur-md rounded-full shadow-md' title='start record' />
+                    </div>
+                  )}
                 </div>
               </div>
-              {/* <div className="flex items-center space-x-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-sm text-gray-700 font-medium">
-                  {participants.length} {participants.length === 1 ? 'participant' : 'participants'}
-                </span>
-              </div> */}
-
-              {/* {connectionStats && (
-                <div className="hidden md:flex items-center space-x-2 text-xs text-gray-600 bg-gray-100/50 px-3 py-1 rounded-full">
-                  <span>Connection: {connectionStats?._connectionState}</span>
-                </div>
-              )} */}
             </div>
           </div>
         </header>
@@ -1076,7 +1089,7 @@ const Room = ({ roomId, name, isCreating }) => {
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                         <div className="w-20 h-20 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                       </div>
-                    ) : localStream && trackStates.video && localStream ? (
+                    ) : localStream && trackStates.video ? (
                       <Video stream={localStream} muted={true} className="w-full h-full object-cover rounded-2xl" />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
@@ -1091,13 +1104,13 @@ const Room = ({ roomId, name, isCreating }) => {
                       </div>
                     )
                   ) : null}
-                  <div className={`absolute bottom-4 left-4 bg-gray-100/70  ${(!trackStates.video && localStream || !trackStates.audio && localStream) ? "pe-2 " : " pe-4"} ps-4 py-2 rounded-full text-gray-900 text-sm backdrop-blur-sm flex items-center space-x-2`}>
+                  <div className={`absolute bottom-4 left-4 bg-gray-100/70 ${(!trackStates.video || !trackStates.audio) ? "pe-2" : "pe-4"} ps-4 py-2 rounded-full text-gray-900 text-sm backdrop-blur-sm flex items-center space-x-2`}>
                     <span>{localParticipant?.name} (You)</span>
-                    {!trackStates.video && localStream && (
-                      <span className="p-2 text-base bg-red-400/80 text-white rounded-full "><PiCameraSlashLight /></span>
+                    {!trackStates.video && (
+                      <span className="p-2 text-base bg-red-400/80 text-white rounded-full"><PiCameraSlashLight /></span>
                     )}
-                    {!trackStates.audio && localStream && (
-                      <span className="p-2 text-base bg-red-400/80 text-white rounded-full "><CiMicrophoneOff /></span>
+                    {!trackStates.audio && (
+                      <span className="p-2 text-base bg-red-400/80 text-white rounded-full"><CiMicrophoneOff /></span>
                     )}
                   </div>
                 </div>
@@ -1128,11 +1141,19 @@ const Room = ({ roomId, name, isCreating }) => {
                             </div>
                           )
                         ) : peerConsumers[screenSharingParticipant.id]?.media.screen ? (
-                          <Video
-                            stream={peerConsumers[screenSharingParticipant.id].media.screen.stream}
-                            muted={false}
-                            className="w-full h-full object-contain rounded-2xl"
-                          />
+                          <>
+                            {console.log('Rendering screen share for participant:', {
+                              peerId: screenSharingParticipant.id,
+                              stream: peerConsumers[screenSharingParticipant.id].media.screen.stream,
+                              tracks: peerConsumers[screenSharingParticipant.id].media.screen.stream.getTracks(),
+                              isScreenSharing: screenSharingParticipant.sharingScreen,
+                            })}
+                            <Video
+                              stream={peerConsumers[screenSharingParticipant.id].media.screen.stream}
+                              muted={false}
+                              className="w-full h-full object-contain rounded-2xl"
+                            />
+                          </>
                         ) : (
                           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                             <div className="text-center">
@@ -1154,18 +1175,12 @@ const Room = ({ roomId, name, isCreating }) => {
                       </>
                     ) : adminParticipant ? (
                       <>
-                        {peerConsumers[adminParticipant.id]?.media.video && adminParticipant.isVideoOn ? (
-                          <Video
-                            stream={peerConsumers[adminParticipant.id].media.video.stream}
-                            muted={false}
-                            className="w-full h-full object-cover rounded-2xl"
-                          />
-                        ) : adminParticipant.id === peerId ? (
+                        {adminParticipant.id === peerId ? (
                           isMediaLoading ? (
                             <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                               <div className="w-20 h-20 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                             </div>
-                          ) : localStream && adminParticipant.isVideoOn ? (
+                          ) : localStream && trackStates.video ? (
                             <Video stream={localStream} muted={true} className="w-full h-full object-cover rounded-2xl" />
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
@@ -1175,10 +1190,23 @@ const Room = ({ roomId, name, isCreating }) => {
                                     {adminParticipant.name?.charAt(0).toUpperCase() || 'A'}
                                   </span>
                                 </div>
-                                {/* <p className="text-gray-900 text-lg font-medium">{adminParticipant.name}</p> */}
                               </div>
                             </div>
                           )
+                        ) : peerConsumers[adminParticipant.id]?.media.video && adminParticipant.isVideoOn ? (
+                          <>
+                            {console.log('Rendering video for admin participant:', {
+                              peerId: adminParticipant.id,
+                              stream: peerConsumers[adminParticipant.id].media.video.stream,
+                              tracks: peerConsumers[adminParticipant.id].media.video.stream.getTracks(),
+                              isVideoOn: adminParticipant.isVideoOn,
+                            })}
+                            <Video
+                              stream={peerConsumers[adminParticipant.id].media.video.stream}
+                              muted={false}
+                              className="w-full h-full object-cover rounded-2xl"
+                            />
+                          </>
                         ) : (
                           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                             <div className="text-center">
@@ -1187,11 +1215,10 @@ const Room = ({ roomId, name, isCreating }) => {
                                   {adminParticipant.name?.charAt(0).toUpperCase() || 'A'}
                                 </span>
                               </div>
-                              {/* <p className="text-gray-900 text-lg font-medium">{adminParticipant.name}</p> */}
                             </div>
                           </div>
                         )}
-                        <div className={`absolute bottom-4 left-4 ${adminParticipant.isVideoOn ? "bg-gray-100/70" : " bg-gray-200"}  ${(!adminParticipant.isVideoOn || !adminParticipant.isAudioOn) ? "pe-2 " : " pe-4"} ps-4 py-2 rounded-full text-gray-900 text-sm backdrop-blur-sm flex items-center space-x-2`}>
+                        <div className={`absolute bottom-4 left-4 ${adminParticipant.isVideoOn ? "bg-gray-100/70" : "bg-gray-200"} ${(!adminParticipant.isVideoOn || !adminParticipant.isAudioOn) ? "pe-2" : "pe-4"} ps-4 py-2 rounded-full text-gray-900 text-sm backdrop-blur-sm flex items-center space-x-2`}>
                           <span>{adminParticipant.name} {adminParticipant.id === peerId ? '(You)' : '(Admin)'}</span>
                           {!adminParticipant.isVideoOn && (
                             <span className="p-2 text-base bg-red-400/80 text-white rounded-full"><PiCameraSlashLight /></span>
@@ -1213,7 +1240,7 @@ const Room = ({ roomId, name, isCreating }) => {
                           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                             <div className="w-20 h-20 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                           </div>
-                        ) : localStream && trackStates.video && localStream ? (
+                        ) : localStream && trackStates.video ? (
                           <Video stream={localStream} muted={true} className="w-full h-full object-cover rounded-2xl" />
                         ) : (
                           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
@@ -1227,19 +1254,19 @@ const Room = ({ roomId, name, isCreating }) => {
                             </div>
                           </div>
                         )}
-                        <div className={`absolute bottom-3 left-3 ${trackStates.video && localStream ? "bg-gray-100/70" : " bg-gray-200"} ${(!trackStates.video && localStream && !trackStates.audio && localStream) ? " pe-1" : " pe-2"} ps-2 py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2`}>
+                        <div className={`absolute bottom-3 left-3 ${trackStates.video ? "bg-gray-100/70" : "bg-gray-200"} ${(!trackStates.video || !trackStates.audio) ? "pe-1" : "pe-2"} ps-2 py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2`}>
                           <span>You</span>
-                          {!trackStates.video && localStream && (
+                          {!trackStates.video && (
                             <span className="p-1 bg-red-400/80 text-white rounded-full text-sm"><PiCameraSlashLight /></span>
                           )}
-                          {!trackStates.audio && localStream && (
+                          {!trackStates.audio && (
                             <span className="p-1 bg-red-400/80 text-white rounded-full text-sm"><CiMicrophoneOff /></span>
                           )}
                         </div>
                       </div>
                     </div>
                   )}
-                  {localParticipant.sharingScreen && peerConsumers[adminParticipant.id]?.media.video && (
+                  {localParticipant?.sharingScreen && peerConsumers[adminParticipant.id]?.media.video && (
                     <div className="bg-white/50 rounded-2xl overflow-hidden border border-gray-200/50 backdrop-blur-sm shadow-xl">
                       <div className="relative aspect-video">
                         {isMediaLoading ? (
@@ -1247,7 +1274,19 @@ const Room = ({ roomId, name, isCreating }) => {
                             <div className="w-20 h-20 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                           </div>
                         ) : peerConsumers[adminParticipant.id].media.video && adminParticipant.isVideoOn ? (
-                          <Video stream={peerConsumers[adminParticipant.id].media.video.stream} muted={true} className="w-full h-full object-cover rounded-2xl" />
+                          <>
+                            {console.log('Rendering video for admin (screen sharing case):', {
+                              peerId: adminParticipant.id,
+                              stream: peerConsumers[adminParticipant.id].media.video.stream,
+                              tracks: peerConsumers[adminParticipant.id].media.video.stream.getTracks(),
+                              isVideoOn: adminParticipant.isVideoOn,
+                            })}
+                            <Video
+                              stream={peerConsumers[adminParticipant.id].media.video.stream}
+                              muted={true}
+                              className="w-full h-full object-cover rounded-2xl"
+                            />
+                          </>
                         ) : (
                           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                             <div className="text-center">
@@ -1260,7 +1299,7 @@ const Room = ({ roomId, name, isCreating }) => {
                             </div>
                           </div>
                         )}
-                        <div className="absolute bottom-3 left-3 bg-gray-100/70 px-3 py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2">
+                        <div className={`absolute bottom-3 left-3 bg-gray-100/70 ${!adminParticipant.isVideoOn || !adminParticipant.isAudioOn ? "px-3" : "px-4"} py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2`}>
                           <span>Admin</span>
                           {!adminParticipant.isVideoOn && (
                             <span className="px-2 py-1 bg-red-400/80 rounded-full text-white text-xxs"><PiCameraSlashLight /></span>
@@ -1290,11 +1329,19 @@ const Room = ({ roomId, name, isCreating }) => {
                                   </div>
                                 </div>
                               ) : peerConsumers[participant.id]?.media.video && participant.isVideoOn ? (
-                                <Video
-                                  stream={peerConsumers[participant.id].media.video.stream}
-                                  muted={false}
-                                  className="w-full h-full object-cover rounded-2xl"
-                                />
+                                <>
+                                  {console.log('Rendering video for participant:', {
+                                    peerId: participant.id,
+                                    stream: peerConsumers[participant.id].media.video.stream,
+                                    tracks: peerConsumers[participant.id].media.video.stream.getTracks(),
+                                    isVideoOn: participant.isVideoOn,
+                                  })}
+                                  <Video
+                                    stream={peerConsumers[participant.id].media.video.stream}
+                                    muted={false}
+                                    className="w-full h-full object-cover rounded-2xl"
+                                  />
+                                </>
                               ) : (
                                 <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                                   <div className="text-center">
@@ -1303,13 +1350,12 @@ const Room = ({ roomId, name, isCreating }) => {
                                         {participant.name?.charAt(0).toUpperCase() || 'U'}
                                       </span>
                                     </div>
-                                    {/* <p className="text-gray-900 text-sm font-medium">{participant.name}</p> */}
                                   </div>
                                 </div>
                               )}
-                              <div className={`absolute bottom-3 left-3 ${participant.isVideoOn ? "bg-gray-100/70" : "bg-gray-200"} ${(participant.isVideoOn && participant.isAudioOn) ? " pe-2" : " pe-1"} ps-2 py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2`}>
+                              <div className={`absolute bottom-3 left-3 ${participant.isVideoOn ? "bg-gray-100/70" : "bg-gray-200"} ${(participant.isVideoOn && participant.isAudioOn) ? "pe-2" : "pe-1"} ps-2 py-1 rounded-full text-gray-900 text-xs backdrop-blur-sm flex items-center space-x-2`}>
                                 <span>{participant.name}</span>
-                                {!participant.isVideoOn && !participant.shareScreen && (
+                                {!participant.isVideoOn && !participant.sharingScreen && (
                                   <span className="p-1 bg-red-400/80 text-white rounded-full text-sm"><PiCameraSlashLight /></span>
                                 )}
                                 {!participant.isAudioOn && (
@@ -1379,7 +1425,9 @@ const Room = ({ roomId, name, isCreating }) => {
             className={`absolute z-10 right-6 ${chatOpen ? 'bottom-6' : '-bottom-4'} w-96 bg-white/50 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-2xl transition-all duration-500 ease-in-out ${chatOpen ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
           >
             <div className="p-4 border-b border-gray-200/50 bg-gray-100/50 rounded-t-2xl backdrop-blur-2xl flex justify-between items-center">
-              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <MdOutlineChat className=" size-5" /><span className="mb-1">Chat</span></h3>
+              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2">
+                <MdOutlineChat className="size-5" /><span className="mb-1">Chat</span>
+              </h3>
               <button onClick={() => setChatOpen(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
                   <path
@@ -1400,7 +1448,7 @@ const Room = ({ roomId, name, isCreating }) => {
                       className={`inline-block max-w-xs px-4 py-2 rounded-xl shadow-md ${msg.senderId === peerId
                         ? 'bg-gradient-to-r from-blue-500 to-teal-500 text-white'
                         : 'bg-gray-200/50 text-gray-900'
-                        }`}
+                      }`}
                     >
                       <div className="text-xs text-gray-600 mb-1">
                         {msg.senderName} {msg.senderId === peerId && '(You)'}
@@ -1434,7 +1482,9 @@ const Room = ({ roomId, name, isCreating }) => {
             className={`absolute z-10 left-6 ${showparticipants ? 'bottom-6' : '-bottom-4'} w-96 bg-gray-200 rounded-2xl border border-gray-200/50 shadow-2xl transition-all duration-500 ease-in-out ${showparticipants ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
           >
             <div className="p-4 border-b border-gray-200/50 bg-gray-100/50 rounded-t-2xl backdrop-blur-2xl flex justify-between items-center">
-              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2"> <HiOutlineUserGroup className=" size-5" /><span className="">Participiants {`(${participants?.length})`}</span></h3>
+              <h3 className="text-gray-900 text-lg font-semibold flex items-center gap-x-2">
+                <HiOutlineUserGroup className="size-5" /><span>Participants {`(${participants?.length})`}</span>
+              </h3>
               <button onClick={() => setshowparticipants(false)} className="text-gray-500 hover:text-gray-900 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
                   <path
@@ -1446,27 +1496,25 @@ const Room = ({ roomId, name, isCreating }) => {
               </button>
             </div>
             <div className='max-h-80 overflow-y-auto'>
-              {
-                participants?.map((per, index) => (
-                  <div key={index} className={` flex item-center justify-between p-3 ${(participants.length - 1) === index ? "border-b-0" : "border-b"} border-b-gray-400`}>
-                    <div className=' flex items-center justify-center gap-x-1'><span className=' text-gray-800 font-semibold'>{per.name}</span>{per.isAdmin && <span className="bg-gradient-to-r from-blue-500 to-teal-500 text-xs text-white px-3 py-1 rounded-full shadow-md">Admin</span>}<span>{per.id === socket.id && "(You)"}</span></div>
-                    <div className=" flex item-center justify-center gap-x-2">
-                      {
-                        per.sharingScreen && (<MdScreenShare className=' size-5.5 text-blue-600' />)
-                      }
-                      {
-                        per.isVideoOn ? <FiCamera className=' size-5 text-green-600' /> : <FiCameraOff className=' size-5 text-red-500' />
-                      }
-                      {
-                        per.isAudioOn ? <IoMicOutline className=' size-5 text-green-600' /> : <IoMicOffOutline className=' size-5 text-red-500' />
-                      }
-                      {
-                        per.handRaise && (<PiHandPalmDuotone className=' size-5 text-yellow-500' />)
-                      }
-                    </div>
+              {participants?.map((per, index) => (
+                <div key={index} className={`flex item-center justify-between p-3 ${(participants.length - 1) === index ? "border-b-0" : "border-b"} border-b-gray-400`}>
+                  <div className='flex items-center justify-center gap-x-1'>
+                    <span className='text-gray-800 font-semibold'>{per.name}</span>
+                    {per.isAdmin && (
+                      <span className="bg-gradient-to-r from-blue-500 to-teal-500 text-xs text-white px-3 py-1 rounded-full shadow-md">
+                        Admin
+                      </span>
+                    )}
+                    <span>{per.id === socket.id && "(You)"}</span>
                   </div>
-                ))
-              }
+                  <div className="flex item-center justify-center gap-x-2">
+                    {per.sharingScreen && <MdScreenShare className='size-5.5 text-blue-600' />}
+                    {per.isVideoOn ? <FiCamera className='size-5 text-green-600' /> : <FiCameraOff className='size-5 text-red-500' />}
+                    {per.isAudioOn ? <IoMicOutline className='size-5 text-green-600' /> : <IoMicOffOutline className='size-5 text-red-500' />}
+                    {per.handRaise && <PiHandPalmDuotone className='size-5 text-yellow-500' />}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </main>
