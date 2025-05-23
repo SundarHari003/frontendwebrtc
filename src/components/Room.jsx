@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://t9p4vxq4-3001.inc1.devtunnels.ms/', {
+    const newSocket = io('https://webrtc.keprevos.com/', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
@@ -653,7 +653,7 @@ const Room = ({ roomId, name, isCreating }) => {
           mediaType: consumer.appData.mediaType || params.kind, // Include mediaType for categorization
         };
       } catch (err) {
-        toast.error(`Error consuming producer: ${err.message}`);
+        // toast.error(`Error consuming producer: ${err.message}`);
         console.log('Create consumer error:', err.message);
         return null;
       }
