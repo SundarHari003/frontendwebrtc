@@ -1,10 +1,25 @@
 import React, { useEffect, useRef } from 'react';
 
-const Video = ({ stream, muted, className = '' }) => {
+const Video = ({ Videostream, Audiostream, muted, className = '', islocal, stream }) => {
   const videoRef = useRef(null);
+  function mergeMediaStreams(videoStream, audioStream) {
+    const combinedStream = new MediaStream();
 
+    if (videoStream) {
+      videoStream.getVideoTracks().forEach((track) => combinedStream.addTrack(track));
+    }
+
+    if (audioStream) {
+      audioStream.getAudioTracks().forEach((track) => combinedStream.addTrack(track));
+    }
+
+    return combinedStream;
+  }
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (videoRef.current && Videostream) {
+      videoRef.current.srcObject = mergeMediaStreams(Videostream, Audiostream);
+    }
+    if (islocal) {
       videoRef.current.srcObject = stream;
     }
 
@@ -13,7 +28,7 @@ const Video = ({ stream, muted, className = '' }) => {
         videoRef.current.srcObject = null;
       }
     };
-  }, [stream]);
+  }, [stream, Videostream, Audiostream]);
 
   return (
     <video
