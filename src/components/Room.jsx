@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://webrtc.keprevos.com/', {
+    const newSocket = io('http://100.126.32.43:3001', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
@@ -905,51 +905,51 @@ const Room = ({ roomId, name, isCreating }) => {
     );
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-900 p-4">
-        <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-          <div className="bg-red-600 px-4 py-3">
-            <h2 className="text-lg font-bold text-white">Connection Error</h2>
-          </div>
-          <div className="p-6">
-            <div className="flex items-start">
-              <div className="flex-shrink-0">
-                <svg
-                  className="h-6 w-6 text-red-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-lg font-medium text-white">Something went wrong</h3>
-                <div className="mt-2 text-sm text-gray-300">
-                  <p>{error}</p>
-                  <p className="mt-2 text-xs text-gray-400">Debug state: {debugState}</p>
-                </div>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => window.location.reload()}
-                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition"
-              >
-                Refresh Page
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // if (error) {
+  //   return (
+  //     <div className="flex items-center justify-center min-h-screen bg-gray-900 p-4">
+  //       <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+  //         <div className="bg-red-600 px-4 py-3">
+  //           <h2 className="text-lg font-bold text-white">Connection Error</h2>
+  //         </div>
+  //         <div className="p-6">
+  //           <div className="flex items-start">
+  //             <div className="flex-shrink-0">
+  //               <svg
+  //                 className="h-6 w-6 text-red-500"
+  //                 fill="none"
+  //                 viewBox="0 0 24 24"
+  //                 stroke="currentColor"
+  //               >
+  //                 <path
+  //                   strokeLinecap="round"
+  //                   strokeLinejoin="round"
+  //                   strokeWidth={2}
+  //                   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+  //                 />
+  //               </svg>
+  //             </div>
+  //             <div className="ml-3">
+  //               <h3 className="text-lg font-medium text-white">Something went wrong</h3>
+  //               <div className="mt-2 text-sm text-gray-300">
+  //                 <p>{error}</p>
+  //                 <p className="mt-2 text-xs text-gray-400">Debug state: {debugState}</p>
+  //               </div>
+  //             </div>
+  //           </div>
+  //           <div className="mt-6 flex justify-end space-x-3">
+  //             <button
+  //               onClick={() => window.location.reload()}
+  //               className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition"
+  //             >
+  //               Refresh Page
+  //             </button>
+  //           </div>
+  //         </div>
+  //       </div>
+  //     </div>
+  //   );
+  // }
 
   if (isLoading) {
     return (

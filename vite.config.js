@@ -3,20 +3,27 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(),
-    tailwindcss()
-  ],
-  base: '/frontendwebrtc/',
+  plugins: [react(), tailwindcss()],
+  define: {
+    'process.env': {},
+    'process.browser': true,
+  },
+  base: '/',
+  server: {
+    port: 3000,
+    open: true,
+  },
   build: {
-    chunkSizeWarningLimit: 1000, // increase limit if you're okay with larger chunks
+    outDir: 'dist',
+    chunkSizeWarningLimit: 12000,
     rollupOptions: {
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
-            return 'vendor'; // creates a separate vendor chunk
+            return 'vendor'
           }
-        }
-      }
-    }
-  }
+        },
+      },
+    },
+  },
 })
