@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('http://100.126.32.43:3001', {
+    const newSocket = io('https://deb7-103-176-188-201.ngrok-free.app', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
