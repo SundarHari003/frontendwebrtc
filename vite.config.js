@@ -8,7 +8,7 @@ export default defineConfig({
     'process.env': {},
     'process.browser': true,
   },
-  base: '/',
+  base: '/frontendwebrtc/',
   server: {
     port: 3000,
     open: true,
