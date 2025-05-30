@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://deb7-103-176-188-201.ngrok-free.app', {
+    const newSocket = io('http://184.72.81.244:3000', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
@@ -484,11 +484,17 @@ const Room = ({ roomId, name, isCreating }) => {
             console.log(`Create ${direction} transport error:`, response.error);
             return;
           }
+          const transoprticeserver = {
+            ...response.params, iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              // Add TURN server if available
+            ]
+          };
 
           const transport =
             direction === 'send'
-              ? device.createSendTransport(response.params)
-              : device.createRecvTransport(response.params);
+              ? device.createSendTransport(transoprticeserver)
+              : device.createRecvTransport(transoprticeserver);
 
           transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             socket.emit('connectTransport', { transportId: transport.id, dtlsParameters }, (res) => {
@@ -522,6 +528,17 @@ const Room = ({ roomId, name, isCreating }) => {
               toast.error(`Transport ${direction} connection failed`);
               console.log(`Transport ${direction} connection state changed to:`, state);
             }
+          });
+          transport.on('icecandidate', (candidate) => {
+            console.log(`ICE candidate for ${direction} transport:`, candidate);
+          });
+
+          transport.on('icegatheringstatechange', () => {
+            console.log(`ICE gathering state for ${direction} transport:`, transport.iceGatheringState);
+          });
+
+          transport.on('icestatechange', (state) => {
+            console.log(`ICE connection state for ${direction} transport:`, state);
           });
 
           resolve(transport);
@@ -1043,13 +1060,13 @@ const Room = ({ roomId, name, isCreating }) => {
                         <div className="w-20 h-20 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                       </div>
                     ) : localStream && trackStates.video && localStream ? (
-                      <Video 
-                      Videostream={null}
-                      Audiostream={null}
-                      islocal={true}
-                      stream={localStream} 
-                      muted={true} 
-                      className="w-full h-full object-cover rounded-2xl" />
+                      <Video
+                        Videostream={null}
+                        Audiostream={null}
+                        islocal={true}
+                        stream={localStream}
+                        muted={true}
+                        className="w-full h-full object-cover rounded-2xl" />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
                         <div className="text-center">
@@ -1310,7 +1327,7 @@ const Room = ({ roomId, name, isCreating }) => {
                                     </div>
                                     {/* <p className="text-gray-900 text-sm font-medium">{participant.name}</p> */}
                                     {
-                                      peerConsumers[participant.id]?.media.adio && participant.isAudioOn &&(
+                                      peerConsumers[participant.id]?.media.adio && participant.isAudioOn && (
                                         <Audio
                                           stream={peerConsumers[participant.id].media.audio.stream}
                                         />
