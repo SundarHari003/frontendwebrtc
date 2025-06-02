@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://proxy170.r3proxy.com:36981/', {
+    const newSocket = io('https://184.72.81.244:3000/', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
