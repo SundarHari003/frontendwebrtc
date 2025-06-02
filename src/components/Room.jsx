@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://kep-admin-forwarded-http-dev.at.remote.it:33000', {
+    const newSocket = io('https://proxy170.r3proxy.com:36981/', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
