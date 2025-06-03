@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://184.72.81.244:3000/', {
+    const newSocket = io('https://t9p4vxq4-3000.inc1.devtunnels.ms/', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
