@@ -147,7 +147,7 @@ const Room = ({ roomId, name, isCreating }) => {
   // Initialize socket connection
   useEffect(() => {
     setDebugState('connecting-socket');
-    const newSocket = io('https://t9p4vxq4-3000.inc1.devtunnels.ms/', {
+    const newSocket = io('https://rnjhw-103-176-188-240.a.free.pinggy.link', {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       autoConnect: true,
